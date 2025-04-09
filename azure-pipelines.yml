@@ -1,10 +1,7 @@
-# ASP.NET Core (.NET Framework)
-# Build and test ASP.NET Core projects targeting the full .NET Framework.
-# Add steps that publish symbols, save build artifacts, and more:
-# https://docs.microsoft.com/azure/devops/pipelines/languages/dotnet-core
+# ASP.NET Core (.NET Framework) - Build & Deploy with Azure SQL
 
 trigger:
-- main
+- master  # Déclenche sur la branche master
 
 pool:
   vmImage: 'windows-latest'
@@ -13,9 +10,9 @@ variables:
   solution: '**/*.sln'
   buildPlatform: 'Any CPU'
   buildConfiguration: 'Release'
-  # Variables pour le déploiement
-  azureSubscription: 'soniaconnection' # Remplacez par le nom exact de votre connexion de service
-  webAppName: 'soniaweb' # Remplacez par le nom exact que vous avez donné à votre Azure Web App
+  azureSubscription: 'soniaconnection' # Connexion de service à Azure
+  webAppName: 'soniaweb'               # Nom de la Web App
+  sqlConnectionString: '$(SQL_CONNECTION_STRING)' # Injecté comme secret variable dans Azure DevOps
 
 steps:
 - task: NuGetToolInstaller@1
@@ -27,7 +24,13 @@ steps:
 - task: VSBuild@1
   inputs:
     solution: '$(solution)'
-    msbuildArgs: '/p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true /p:DesktopBuildPackageLocation="$(build.artifactStagingDirectory)\WebApp.zip" /p:DeployIisAppPath="Default Web Site"'
+    msbuildArgs: >
+      /p:DeployOnBuild=true 
+      /p:WebPublishMethod=Package 
+      /p:PackageAsSingleFile=true 
+      /p:SkipInvalidConfigurations=true 
+      /p:DesktopBuildPackageLocation="$(build.artifactStagingDirectory)\WebApp.zip" 
+      /p:DeployIisAppPath="Default Web Site"
     platform: '$(buildPlatform)'
     configuration: '$(buildConfiguration)'
 
@@ -36,7 +39,6 @@ steps:
     platform: '$(buildPlatform)'
     configuration: '$(buildConfiguration)'
 
-# Publier les artifacts de build
 - task: PublishBuildArtifacts@1
   inputs:
     PathtoPublish: '$(Build.ArtifactStagingDirectory)'
@@ -44,7 +46,7 @@ steps:
     publishLocation: 'Container'
   displayName: 'Publish Build Artifacts'
 
-# Déployer sur Azure Web App
+# Déployer sur Azure Web App avec AzureRmWebAppDeployment
 - task: AzureRmWebAppDeployment@4
   inputs:
     ConnectionType: 'AzureRM'
@@ -52,4 +54,6 @@ steps:
     appType: 'webApp'
     WebAppName: '$(webAppName)'
     packageForLinux: '$(Build.ArtifactStagingDirectory)/WebApp.zip'
-  displayName: 'Deploy using AzureRmWebAppDeployment'
+  displayName: 'Deploy to Azure Web App'
+
+
