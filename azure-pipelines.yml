@@ -45,11 +45,11 @@ steps:
   displayName: 'Publish Build Artifacts'
 
 # Déployer sur Azure Web App
-- task: AzureWebApp@1
+- task: AzureRmWebAppDeployment@4
   inputs:
+    ConnectionType: 'AzureRM'
     azureSubscription: '$(azureSubscription)'
     appType: 'webApp'
-    appName: '$(webAppName)'
-    package: '$(Build.ArtifactStagingDirectory)/**/*.zip'
-    deploymentMethod: 'auto'
-  displayName: 'Deploy to Azure Web App'
+    WebAppName: '$(webAppName)'
+    packageForLinux: '$(Build.ArtifactStagingDirectory)/WebApp.zip'
+  displayName: 'Deploy using AzureRmWebAppDeployment'
