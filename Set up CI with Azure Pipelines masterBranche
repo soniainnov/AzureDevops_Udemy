@@ -1,0 +1,112 @@
+trigger:
+- master  # Déclenche sur la branche master
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  solution: '**/*.sln'
+  buildPlatform: 'Any CPU'
+  buildConfiguration: 'Release'
+  azureSubscription: 'soniaconnection' # Connexion de service à Azure
+  webAppName: 'soniaweb'               # Nom de la Web App
+  sqlConnectionString: '$(SQL_CONNECTION_STRING)' # Injecté comme secret variable dans Azure DevOps
+  sqlServerName: 'sonia-sqlserver'     # Nom de votre serveur SQL Azure
+  sqlDatabaseName: 'soniadb'           # Nom de votre base de données existante
+
+stages:
+- stage: Build
+  displayName: 'Build and Test'
+  jobs:
+  - job: Build
+    steps:
+    - task: NuGetToolInstaller@1
+    
+    - task: NuGetCommand@2
+      inputs:
+        restoreSolution: '$(solution)'
+    
+    # Construction de l'application web
+    - task: VSBuild@1
+      inputs:
+        solution: '$(solution)'
+        msbuildArgs: >
+          /p:DeployOnBuild=true 
+          /p:WebPublishMethod=Package 
+          /p:PackageAsSingleFile=true 
+          /p:SkipInvalidConfigurations=true 
+          /p:DesktopBuildPackageLocation="$(build.artifactStagingDirectory)\WebApp.zip" 
+          /p:DeployIisAppPath="Default Web Site"
+        platform: '$(buildPlatform)'
+        configuration: '$(buildConfiguration)'
+    
+    # Si vous avez des scripts de migration de base de données, les copier dans l'artefact
+    - task: CopyFiles@2
+      displayName: 'Copy Database Scripts'
+      inputs:
+        SourceFolder: '$(Build.SourcesDirectory)/DatabaseScripts'  # Ajustez selon l'emplacement de vos scripts
+        Contents: '**/*.sql'
+        TargetFolder: '$(Build.ArtifactStagingDirectory)/DatabaseScripts'
+      continueOnError: true  # Au cas où le dossier n'existe pas
+    
+    # Exécution des tests
+    - task: VSTest@2
+      inputs:
+        platform: '$(buildPlatform)'
+        configuration: '$(buildConfiguration)'
+    
+    # Publication des artefacts de build
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+        ArtifactName: 'drop'
+        publishLocation: 'Container'
+      displayName: 'Publish Build Artifacts'
+
+- stage: Deploy
+  displayName: 'Deploy Application and Database'
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - job: DeployDatabase
+    displayName: 'Update Database'
+    steps:
+    # Exécution de scripts SQL pour mettre à jour la base de données existante
+    - task: SqlAzureDacpacDeployment@1
+      displayName: 'Run Database Update Scripts'
+      inputs:
+        azureSubscription: '$(azureSubscription)'
+        AuthenticationType: 'connectionString'
+        ConnectionString: '$(sqlConnectionString)'
+        deployType: 'SqlTask'
+        SqlFile: '$(Pipeline.Workspace)/drop/DatabaseScripts/*.sql'
+        IpDetectionMethod: 'AutoDetect'
+      continueOnError: true  # Au cas où il n'y a pas de scripts SQL
+
+    # Exécution de migrations Entity Framework Core (si vous utilisez EF Core)
+    - task: AzureWebApp@1
+      displayName: 'Run EF Core Migrations'
+      inputs:
+        azureSubscription: '$(azureSubscription)'
+        appType: 'webApp'
+        appName: '$(webAppName)'
+        package: '$(Pipeline.Workspace)/drop/WebApp.zip'
+        deploymentMethod: 'auto'
+        AppSettings: '-ASPNETCORE_ENVIRONMENT "Production" -RunEFMigrations "true"'
+      condition: false  # Désactivé par défaut, activez si vous utilisez EF Core
+
+  - job: DeployWebApp
+    displayName: 'Deploy Web Application'
+    dependsOn: DeployDatabase
+    condition: succeeded()
+    steps:
+    # Déployer sur Azure Web App avec AzureRmWebAppDeployment
+    - task: AzureRmWebAppDeployment@4
+      inputs:
+        ConnectionType: 'AzureRM'
+        azureSubscription: '$(azureSubscription)'
+        appType: 'webApp'
+        WebAppName: '$(webAppName)'
+        packageForLinux: '$(Pipeline.Workspace)/drop/WebApp.zip'
+        AppSettings: '-ConnectionStrings:DefaultConnection "$(sqlConnectionString)"'
+      displayName: 'Deploy to Azure Web App'
